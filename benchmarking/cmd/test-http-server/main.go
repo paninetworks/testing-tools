@@ -1,23 +1,23 @@
 package main
 
 import (
-	"fmt"
-	"flag"
-	"net"
-	"net/http"
-	"io"
 	"bytes"
 	"crypto/rand"
+	"flag"
+	"fmt"
+	_ "github.com/cgilmour/maxopen"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
 	"time"
-	_ "github.com/cgilmour/maxopen"
 )
 
 var (
-	port = flag.Uint("port", 8080, "Port to listen for HTTP requests")
-	endpoint = flag.String("endpoint", "/endpoint", "Name of the endpoint that HTTP requests can be sent to")
+	port         = flag.Uint("port", 8080, "Port to listen for HTTP requests")
+	endpoint     = flag.String("endpoint", "/endpoint", "Name of the endpoint that HTTP requests can be sent to")
 	responseSize = flag.Uint("response-size", 512, "Number of bytes of random data to send in HTTP responses")
 )
 
@@ -62,7 +62,7 @@ func main() {
 			rx, tx := bc.Sample()
 			n := cc.Sample()
 			if rx == 0 && tx == 0 && n == 0 {
-				if ! idle {
+				if !idle {
 					idleTime = time.Now()
 				}
 				idle = true
@@ -117,9 +117,9 @@ func (c *connCounter) Sample() int {
 
 type timedConn struct {
 	net.Conn
-	openTS time.Time
+	openTS  time.Time
 	closeTS time.Time
-	bc *byteCounter
+	bc      *byteCounter
 }
 
 func (tc *timedConn) Read(b []byte) (int, error) {
@@ -145,7 +145,7 @@ func (tc timedConn) Close() error {
 }
 
 type byteCounter struct {
-	m sync.Mutex
+	m  sync.Mutex
 	rx int
 	tx int
 }

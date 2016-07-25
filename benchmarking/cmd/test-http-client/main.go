@@ -3,6 +3,8 @@ package main
 import (
 	"flag"
 	"fmt"
+	_ "github.com/cgilmour/maxopen"
+	"github.com/cgilmour/uuid"
 	"io"
 	"io/ioutil"
 	"net"
@@ -12,12 +14,10 @@ import (
 	"runtime"
 	"sync"
 	"time"
-	"github.com/cgilmour/uuid"
-	_ "github.com/cgilmour/maxopen"
 )
 
 var (
-	requests = flag.Uint("requests", 1, "Number of requests to send before completion.")
+	requests       = flag.Uint("requests", 1, "Number of requests to send before completion.")
 	connectTimeout = flag.Uint("connect-timeout", 1000, "Number of milliseconds to permit connection attempts before timing out.")
 )
 
@@ -63,7 +63,7 @@ func main() {
 	client := &http.Client{Transport: &sessionTransport{m: sessionMap}}
 
 	numWorkers := int(*connectTimeout) / 10
-	if numWorkers < runtime.NumCPU() * 8 {
+	if numWorkers < runtime.NumCPU()*8 {
 		numWorkers = runtime.NumCPU() * 8
 	}
 	wg := &sync.WaitGroup{}
@@ -97,14 +97,14 @@ func main() {
 	}
 
 	go func() {
-		tickCh := time.Tick(100 * time.Millisecond)
+		tickCh := time.Tick(1 * time.Second) // 100 * time.Millisecond)
 		for range tickCh {
-			rx, tx := bc.Sample()
-			fmt.Println("Bytes sent:", tx, "bytes received:", rx)
+			rp, tp, rb, tb := bc.Sample()
+			fmt.Println("Packets sent:", tp, "received", rp, "Bytes sent:", tb, "bytes received:", rb)
 		}
 	}()
 
-	for i := uint(0);  i < *requests; i++ {
+	for i := uint(0); i < *requests; i++ {
 		u, err := uuid.New4()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating UUID: %s\n", err)
@@ -127,22 +127,22 @@ func main() {
 		c := s.connections[0]
 		dialTime := c.established.Sub(c.started)
 		xferTime := c.closed.ts.Sub(c.firstWrite.ts)
-		fmt.Println(queTime, duration, dialTime, xferTime)
+		fmt.Println(s.generated, queTime, duration, dialTime, xferTime)
 	}
 }
 
 type session struct {
-	uuid string
-	rt http.RoundTripper
-	bc *byteCounter
-	generated time.Time
-	initiated time.Time
-	completed time.Time
+	uuid        string
+	rt          http.RoundTripper
+	bc          *byteCounter
+	generated   time.Time
+	initiated   time.Time
+	completed   time.Time
 	connections []*timedConnection
 }
 
 func newSession(uuid string, bc *byteCounter) *session {
-	s := &session{ uuid: uuid, bc: bc, generated: time.Now() }
+	s := &session{uuid: uuid, bc: bc, generated: time.Now()}
 	s.rt = &http.Transport{Dial: s.Dial}
 	return s
 }
@@ -170,19 +170,20 @@ func (sr *sessionTransport) RoundTrip(req *http.Request) (*http.Response, error)
 
 type timedConnection struct {
 	net.Conn
-	started time.Time
+	started     time.Time
 	established time.Time
-	firstRead timedEvent
-	firstWrite timedEvent
-	closed timedEvent
-	bc *byteCounter
+	firstRead   timedEvent
+	firstWrite  timedEvent
+	closed      timedEvent
+	bc          *byteCounter
 }
 
 func (tc *timedConnection) Read(b []byte) (int, error) {
 	tc.firstRead.Event()
 	n, err := tc.Conn.Read(b)
 	tc.bc.m.Lock()
-	tc.bc.rx += n
+	tc.bc.rp += 1
+	tc.bc.rb += n
 	tc.bc.m.Unlock()
 	return n, err
 }
@@ -191,7 +192,8 @@ func (tc *timedConnection) Write(b []byte) (int, error) {
 	tc.firstWrite.Event()
 	n, err := tc.Conn.Write(b)
 	tc.bc.m.Lock()
-	tc.bc.tx += n
+	tc.bc.tp += 1
+	tc.bc.tb += n
 	tc.bc.m.Unlock()
 	return n, err
 }
@@ -201,20 +203,19 @@ func (tc *timedConnection) Close() error {
 	return tc.Conn.Close()
 }
 
-
 type timedEvent struct {
-	once sync.Once
+	once     sync.Once
 	occurred bool
-	ts time.Time
+	ts       time.Time
 }
 
 func (te *timedEvent) Event() {
 	te.once.Do(
-			func() {
+		func() {
 			te.ts = time.Now()
 			te.occurred = true
-			},
-		 )
+		},
+	)
 }
 
 func (te *timedEvent) When() time.Time {
@@ -226,15 +227,17 @@ func (te *timedEvent) Occurred() bool {
 }
 
 type byteCounter struct {
-	m sync.Mutex
-	rx int
-	tx int
+	m  sync.Mutex
+	rp int
+	tp int
+	rb int
+	tb int
 }
 
-func (bc *byteCounter) Sample() (int, int) {
+func (bc *byteCounter) Sample() (int, int, int, int) {
 	bc.m.Lock()
-	rx, tx := bc.rx, bc.tx
-	bc.rx, bc.tx = 0, 0
+	rp, tp, rb, tb := bc.rp, bc.tp, bc.rb, bc.tb
+	bc.rp, bc.tp, bc.rb, bc.tb = 0, 0, 0, 0
 	bc.m.Unlock()
-	return rx, tx
+	return rp, tp, rb, tb
 }

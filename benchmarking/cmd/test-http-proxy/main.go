@@ -1,13 +1,13 @@
 package main
 
 import (
-	"fmt"
+	"bytes"
 	"flag"
-	"net"
-	"net/http"
+	"fmt"
 	"io"
 	"io/ioutil"
-	"bytes"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
@@ -16,9 +16,9 @@ import (
 )
 
 var (
-	port = flag.Uint("port", 8080, "Port to listen for HTTP requests")
-	endpoint = flag.String("endpoint", "/endpoint", "Name of the endpoint that HTTP requests can be sent to")
-	target = flag.String("target", "", "Target for the HTTP requests. Must be a valid URL.")
+	port           = flag.Uint("port", 8080, "Port to listen for HTTP requests")
+	endpoint       = flag.String("endpoint", "/endpoint", "Name of the endpoint that HTTP requests can be sent to")
+	target         = flag.String("target", "", "Target for the HTTP requests. Must be a valid URL.")
 	connectTimeout = flag.Uint("connect-timeout", 1000, "Number of milliseconds to permit connection attempts before timing out.")
 )
 
@@ -43,15 +43,15 @@ func main() {
 		return
 	}
 	cbc := &byteCounter{}
-	dialer := timedDialer {
+	dialer := timedDialer{
 		dial: (&net.Dialer{Timeout: time.Duration(*connectTimeout) * time.Millisecond}).Dial,
-		bc: cbc,
+		bc:   cbc,
 	}
 	defaultTransport.Dial = dialer.Dial
 	client := &http.Client{Transport: newTimedRoundTripper(http.DefaultTransport)}
 
 	numWorkers := int(*connectTimeout) / 10
-	if numWorkers < runtime.NumCPU() * 8 {
+	if numWorkers < runtime.NumCPU()*8 {
 		numWorkers = runtime.NumCPU() * 8
 	}
 	wg := &sync.WaitGroup{}
@@ -97,7 +97,7 @@ func main() {
 		before := time.Now()
 		ch <- wrappedHandler{req: r, res: w, done: doneCh}
 		after := time.Now()
-		if after.Sub(before) > 1 * time.Second {
+		if after.Sub(before) > 1*time.Second {
 			fmt.Println("Request delayed by", after.Sub(before))
 		}
 		for range doneCh {
@@ -128,7 +128,7 @@ func main() {
 		for range tickCh {
 			rx, tx := bc.Sample()
 			if rx == 0 && tx == 0 {
-				if ! idle {
+				if !idle {
 					idleTime = time.Now()
 				}
 				idle = true
@@ -152,8 +152,8 @@ func main() {
 }
 
 type wrappedHandler struct {
-	req *http.Request
-	res http.ResponseWriter
+	req  *http.Request
+	res  http.ResponseWriter
 	done chan<- struct{}
 }
 
@@ -174,7 +174,7 @@ func (t timedRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 
 type timedDialer struct {
 	dial func(network, addr string) (net.Conn, error)
-	bc *byteCounter
+	bc   *byteCounter
 }
 
 func (td timedDialer) Dial(network, addr string) (net.Conn, error) {
@@ -197,9 +197,9 @@ func (tl *timedListener) Accept() (net.Conn, error) {
 
 type timedConn struct {
 	net.Conn
-	openTS time.Time
+	openTS  time.Time
 	closeTS time.Time
-	bc *byteCounter
+	bc      *byteCounter
 }
 
 func (tc *timedConn) Read(b []byte) (int, error) {
@@ -225,7 +225,7 @@ func (tc timedConn) Close() error {
 }
 
 type byteCounter struct {
-	m sync.Mutex
+	m  sync.Mutex
 	rx int
 	tx int
 }
