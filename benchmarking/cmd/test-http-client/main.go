@@ -56,11 +56,11 @@ func main() {
 		urls = append(urls, param)
 	}
 
-	sessionMap := map[string]*session{}
+	st := &sessionTransport{m: map[string]*session{}}
 	uuidList := []string{}
 
 	bc := &byteCounter{}
-	client := &http.Client{Transport: &sessionTransport{m: sessionMap}}
+	client := &http.Client{Transport: st}
 
 	numWorkers := int(*connectTimeout) / 10
 	if numWorkers < runtime.NumCPU()*8 {
@@ -111,7 +111,9 @@ func main() {
 			continue
 		}
 		s := newSession(u, bc)
-		sessionMap[u] = s
+		st.mu.Lock()
+		st.m[u] = s
+		st.mu.Unlock()
 		uuidList = append(uuidList, u)
 		ch <- s
 	}
@@ -121,7 +123,9 @@ func main() {
 	wg.Wait()
 	fmt.Println("Waited", time.Now().Sub(submitFinished))
 	for _, v := range uuidList {
-		s := sessionMap[v]
+		st.mu.Lock()
+		s := st.m[v]
+		st.mu.Unlock()
 		queTime := s.initiated.Sub(s.generated)
 		duration := s.completed.Sub(s.initiated)
 		c := s.connections[0]
@@ -159,11 +163,14 @@ func (s *session) Dial(network, addr string) (net.Conn, error) {
 
 type sessionTransport struct {
 	m map[string]*session
+	mu sync.Mutex
 }
 
-func (sr *sessionTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+func (st *sessionTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	uuid := req.Header.Get(headerRequestID)
-	sess := sr.m[uuid]
+	st.mu.Lock()
+	sess := st.m[uuid]
+	st.mu.Unlock()
 	res, err := sess.rt.RoundTrip(req)
 	return res, err
 }
