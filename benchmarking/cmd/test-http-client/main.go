@@ -19,6 +19,8 @@ import (
 var (
 	requests       = flag.Uint("requests", 1, "Number of requests to send before completion.")
 	connectTimeout = flag.Uint("connect-timeout", 1000, "Number of milliseconds to permit connection attempts before timing out.")
+	spinupPeriod   = flag.Uint("spinup-period", 500, "Duration to slowly spin up connections (avoiding initial spike).")
+	numWorkers     = flag.Uint("workers", uint(runtime.NumCPU()), "Number of worker goroutines for client connections.")
 )
 
 const (
@@ -62,17 +64,20 @@ func main() {
 	bc := &byteCounter{}
 	client := &http.Client{Transport: st}
 
-	numWorkers := int(*connectTimeout) / 10
-	if numWorkers < runtime.NumCPU()*8 {
-		numWorkers = runtime.NumCPU() * 8
-	}
 	wg := &sync.WaitGroup{}
-	ch := make(chan *session, numWorkers)
-	for i := 0; i < numWorkers; i++ {
+	ch := make(chan *session, int(*numWorkers))
+
+	spinupInterval := time.Duration(*spinupPeriod) * time.Millisecond / time.Duration(*numWorkers)
+	for i := 0; i < int(*numWorkers); i++ {
 		wg.Add(1)
-		go func() {
+		go func(factor int) {
 			defer wg.Done()
+			delay := time.Duration(factor) * spinupInterval
 			for s := range ch {
+				if delay != 0 {
+					time.Sleep(delay)
+					delay = 0
+				}
 				s.initiated = time.Now()
 				s.connections = make([]*timedConnection, 0, len(urls))
 				for _, url := range urls {
@@ -93,14 +98,14 @@ func main() {
 				}
 				s.completed = time.Now()
 			}
-		}()
+		}(i)
 	}
 
+	ticker := time.NewTicker(1 * time.Second) // 100 * time.Millisecond)
 	go func() {
-		tickCh := time.Tick(1 * time.Second) // 100 * time.Millisecond)
-		for range tickCh {
+		for range ticker.C {
 			rp, tp, rb, tb := bc.Sample()
-			fmt.Println("Packets sent:", tp, "received", rp, "Bytes sent:", tb, "bytes received:", rb)
+			fmt.Fprintln(os.Stderr, "Packets sent:", tp, "received", rp, "Bytes sent:", tb, "bytes received:", rb)
 		}
 	}()
 
@@ -118,20 +123,45 @@ func main() {
 		ch <- s
 	}
 	close(ch)
-	submitFinished := time.Now()
-	fmt.Println("Submitted", *requests, "requests, waiting for completion")
+	ticker.Stop()
 	wg.Wait()
-	fmt.Println("Waited", time.Now().Sub(submitFinished))
+
+	// Summary headers
+	fmt.Printf("Session\tStartTime")
+	for i := range urls {
+		fmt.Printf("\tC%[1]dConnSetup\tC%[1]dReqSent\tC%[1]dRespStarted\tC%[1]dRespCompleted", i+1)
+	}
+	fmt.Printf("\tDuration\n")
+
 	for _, v := range uuidList {
-		st.mu.Lock()
 		s := st.m[v]
-		st.mu.Unlock()
-		queTime := s.initiated.Sub(s.generated)
-		duration := s.completed.Sub(s.initiated)
-		c := s.connections[0]
-		dialTime := c.established.Sub(c.started)
-		xferTime := c.closed.ts.Sub(c.firstWrite.ts)
-		fmt.Println(s.generated, queTime, duration, dialTime, xferTime)
+
+		fmt.Printf("%s\t%d", s.uuid, s.initiated.UnixNano())
+		for _, c := range s.connections {
+			connSetup := c.established.Sub(c.started)
+			if connSetup < 0 {
+				connSetup = 0
+			}
+			reqSent := c.firstWrite.ts.Sub(c.established)
+			if reqSent < 0 {
+				reqSent = 0
+			}
+			respStarted := c.firstRead.ts.Sub(c.established)
+			if respStarted < 0 {
+				respStarted = 0
+			}
+			respCompleted := c.closed.ts.Sub(c.established)
+			if respCompleted < 0 {
+				respCompleted = 0
+			}
+			fmt.Printf("\t%d\t%d\t%d\t%d", connSetup, reqSent, respStarted, respCompleted)
+		}
+		dur := s.completed.Sub(s.initiated)
+		if dur < 0 {
+			dur = 0
+		}
+		fmt.Printf("\t%d\n", dur)
+
 	}
 }
 
@@ -162,7 +192,7 @@ func (s *session) Dial(network, addr string) (net.Conn, error) {
 }
 
 type sessionTransport struct {
-	m map[string]*session
+	m  map[string]*session
 	mu sync.Mutex
 }
 
