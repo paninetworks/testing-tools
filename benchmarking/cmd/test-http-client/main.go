@@ -21,6 +21,7 @@ var (
 	connectTimeout = flag.Uint("connect-timeout", 1000, "Number of milliseconds to permit connection attempts before timing out.")
 	spinupPeriod   = flag.Uint("spinup-period", 500, "Duration to slowly spin up connections (avoiding initial spike).")
 	numWorkers     = flag.Uint("workers", uint(runtime.NumCPU()), "Number of worker goroutines for client connections.")
+	startupDelay   = flag.Uint("startup-delay", uint(0), "Number of milliseconds to delay before starting the requests.")
 )
 
 const (
@@ -29,7 +30,7 @@ const (
 
 func usage() {
 	_, cmd := path.Split(os.Args[0])
-	fmt.Fprintf(os.Stderr, "Usage: %s [-requests=n] [-connect-timeout=n] url [url...]\n", cmd)
+	fmt.Fprintf(os.Stderr, "Usage: %s [-requests=n] [-connect-timeout=n] [-spinup-period=n] [-workers=n] [-startup-delay=n] url [url...]\n", cmd)
 }
 
 func main() {
@@ -99,6 +100,11 @@ func main() {
 				s.completed = time.Now()
 			}
 		}(i)
+	}
+
+	if *startupDelay > 0 {
+		fmt.Fprintf(os.Stderr, "Delaying start for %d milliseconds", *startupDelay)
+		time.Sleep(time.Duration(*startupDelay) * time.Millisecond)
 	}
 
 	ticker := time.NewTicker(1 * time.Second) // 100 * time.Millisecond)
