@@ -27,7 +27,7 @@ These measurements are tracked in nanoseconds, and dumped to `stdout` when all s
 
 This tool is written in Go, and can be installed using `go get`:
 ```bash
-go get github.com/romana/benchmark-tools/test-http-client
+go get github.com/paninetworks/testing-tools/benchmarking/cmd/test-http-client
 ```
 After installation, it will be in `$GOPATH/bin/test-http-client`.
 
@@ -76,7 +76,7 @@ These are for informational purposes, not intended for analysis.
 
 This tool is written in Go, and can be installed using `go get`:
 ```bash
-go get github.com/romana/benchmark-tools/test-http-server
+go get github.com/paninetworks/testing-tools/benchmarking/cmd/test-http-server
 ```
 After installation, it will be in `$GOPATH/bin/test-http-server`.
 
@@ -112,7 +112,7 @@ It did not receive significant use, but does function reasonably for its purpose
 
 This tool is written in Go, and can be installed using `go get`:
 ```bash
-go get github.com/romana/benchmark-tools/test-http-proxy
+go get github.com/paninetworks/testing-tools/benchmarking/cmd/test-http-proxy
 ```
 After installation, it will be in `$GOPATH/bin/test-http-proxy`.
 
