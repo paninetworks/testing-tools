@@ -40,6 +40,7 @@ var (
 )
 
 const (
+	// This is used to add a UUID to the HTTP requests for a session.
 	headerRequestID = "X-Request-ID"
 )
 
@@ -49,9 +50,11 @@ func usage() {
 }
 
 func main() {
+	// Set up usage function and parse command-line arguments
 	flag.Usage = usage
 	flag.Parse()
 
+	// Expect a list of URLs as remaining arguments
 	if len(flag.Args()) == 0 {
 		fmt.Fprintf(os.Stderr, "No URLs provided\n")
 		return
@@ -59,6 +62,7 @@ func main() {
 
 	urls := make([]string, 0, len(flag.Args()))
 
+	// Validate the remaining arguments, check that they're parseable URLs
 	for _, param := range flag.Args() {
 		if param == "" {
 			fmt.Fprintf(os.Stderr, "Empty parameter provided, expected URL\n")
@@ -74,15 +78,21 @@ func main() {
 		urls = append(urls, param)
 	}
 
+	// The sessionTransport is used by http.Client to capture per-session timing information.
+	// The uuidList is for ordering these sessions when reporting the timing information
 	st := &sessionTransport{m: map[string]*session{}}
 	uuidList := []string{}
 
+	// Initialize a byteCounter for overall connection activity
 	bc := &byteCounter{}
 	client := &http.Client{Transport: st}
 
+	// WaitGroup and channel for worker goroutines
 	wg := &sync.WaitGroup{}
 	ch := make(chan *session, int(*numWorkers))
 
+	// To avoid hammering endpoints immediately, the worker goroutines are delayed from starting by
+	// the spinupInterval multiplied by worker number.
 	spinupInterval := time.Duration(*spinupPeriod) * time.Millisecond / time.Duration(*numWorkers)
 	for i := 0; i < int(*numWorkers); i++ {
 		wg.Add(1)
@@ -91,11 +101,14 @@ func main() {
 			delay := time.Duration(factor) * spinupInterval
 			for s := range ch {
 				if delay != 0 {
+					// Delay from starting on first request only.
 					time.Sleep(delay)
 					delay = 0
 				}
+				// Capture start timestamp for this session
 				s.initiated = time.Now()
 				s.connections = make([]*timedConnection, 0, len(urls))
+				// Send requests to each target URL.
 				for _, url := range urls {
 					req, err := http.NewRequest("GET", url, nil)
 					if err != nil {
@@ -112,24 +125,30 @@ func main() {
 					io.Copy(ioutil.Discard, resp.Body)
 					resp.Body.Close()
 				}
+				// Capture end timestamp for this session
 				s.completed = time.Now()
 			}
 		}(i)
 	}
 
+	// Delay overall startup.
 	if *startupDelay > 0 {
 		fmt.Fprintf(os.Stderr, "Delaying start for %d milliseconds", *startupDelay)
 		time.Sleep(time.Duration(*startupDelay) * time.Millisecond)
 	}
 
+	// Output some information while requests are being run and data is being captured.
+	// Gives an indication of the amount of traffic that's occuring.
 	ticker := time.NewTicker(1 * time.Second) // 100 * time.Millisecond)
 	go func() {
 		for range ticker.C {
 			rp, tp, rb, tb := bc.Sample()
+			// TODO: Improve the accuracy of this. It's Write()'s and Read()'s, not Packets.
 			fmt.Fprintln(os.Stderr, "Packets sent:", tp, "received", rp, "Bytes sent:", tb, "bytes received:", rb)
 		}
 	}()
 
+	// Start submitting work to the queue.
 	for i := uint(0); i < *requests; i++ {
 		u, err := uuid.New4()
 		if err != nil {
@@ -143,8 +162,11 @@ func main() {
 		uuidList = append(uuidList, u)
 		ch <- s
 	}
+	// Close the channel when all work is submitted.
 	close(ch)
+	// Stop reporting information
 	ticker.Stop()
+	// Wait for goroutines to finish.
 	wg.Wait()
 
 	// Summary headers
@@ -154,6 +176,8 @@ func main() {
 	}
 	fmt.Printf("\tDuration\n")
 
+	// Output the data collected for all the sessions.
+	// This should be redirected to a file for large numbers of requests.
 	for _, v := range uuidList {
 		s := st.m[v]
 
@@ -186,6 +210,9 @@ func main() {
 	}
 }
 
+// session represents a UUID, and a list of URLs that will be requested.
+// Timing information is captured for each request, as well as the overall
+// session initiated and completed timestamps.
 type session struct {
 	uuid        string
 	rt          http.RoundTripper
@@ -196,12 +223,15 @@ type session struct {
 	connections []*timedConnection
 }
 
+// newSession returns a session with our injected RoundTripper.
 func newSession(uuid string, bc *byteCounter) *session {
 	s := &session{uuid: uuid, bc: bc, generated: time.Now()}
 	s.rt = &http.Transport{Dial: s.Dial}
 	return s
 }
 
+// To capture information about the connections made in each session,
+// we provide a Dial method, collecting information around the real net.Dialer's Dial()
 func (s *session) Dial(network, addr string) (net.Conn, error) {
 	tc := &timedConnection{started: time.Now()}
 	conn, err := (&net.Dialer{Timeout: time.Duration(*connectTimeout) * time.Millisecond}).Dial(network, addr)
@@ -212,11 +242,13 @@ func (s *session) Dial(network, addr string) (net.Conn, error) {
 	return tc, err
 }
 
+// sessionTransport is used to inject our session type and RoundTripper into http.Client interactions.
 type sessionTransport struct {
 	m  map[string]*session
 	mu sync.Mutex
 }
 
+// The RoundTrip method is the entrypoint for http.Client. This looks up the session and invokes its individual RoundTrip method.
 func (st *sessionTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	uuid := req.Header.Get(headerRequestID)
 	st.mu.Lock()
@@ -226,6 +258,7 @@ func (st *sessionTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	return res, err
 }
 
+// timedConnection is a net.Conn that collects timing information during Read(), Write() and Close() methods.
 type timedConnection struct {
 	net.Conn
 	started     time.Time
@@ -261,6 +294,8 @@ func (tc *timedConnection) Close() error {
 	return tc.Conn.Close()
 }
 
+// a timedEvent captures a timestamp on first invocation of Event()
+// regardless of how many times it is called.
 type timedEvent struct {
 	once     sync.Once
 	occurred bool
@@ -284,6 +319,7 @@ func (te *timedEvent) Occurred() bool {
 	return te.occurred
 }
 
+// a byteCounter holds the data captured by timedConnection Read() and Write() calls.
 type byteCounter struct {
 	m  sync.Mutex
 	rp int
@@ -292,6 +328,7 @@ type byteCounter struct {
 	tb int
 }
 
+// Sample() returns the current state of the byteCounter and resets the values
 func (bc *byteCounter) Sample() (int, int, int, int) {
 	bc.m.Lock()
 	rp, tp, rb, tb := bc.rp, bc.tp, bc.rb, bc.tb
