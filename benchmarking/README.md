@@ -67,7 +67,7 @@ test-http-client -requests=10000 -workers=32 http://example.com/path
 ## Description
 The Test HTTP Server is used to respond to HTTP requests with a 200 OK, followed a fixed amount of random bytes to emulate the reply from an HTTP endpoint.
 
-To ensure consistency between requests, the test server disabled HTTP Keep-Alives,preallocates the random data for response and forces a `Content-Length` HTTP Header to avoid (chunked transfer encoding)[https://en.wikipedia.org/wiki/Chunked_transfer_encoding].
+To ensure consistency between requests, the test server disabled HTTP Keep-Alives,preallocates the random data for response and forces a `Content-Length` HTTP Header to avoid [chunked transfer encoding](https://en.wikipedia.org/wiki/Chunked_transfer_encoding).
 
 While running, the test server will output some data about the activity - connections per second, and bytes read/written for the HTTP connections.
 These are for informational purposes, not intended for analysis.
